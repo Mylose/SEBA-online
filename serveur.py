@@ -1,5 +1,7 @@
+import json
 import os
 import re
+from urllib.parse import urlparse
 from fastapi import FastAPI, HTTPException
 import requests
 
@@ -15,34 +17,58 @@ def accueil():
 def recuperer_images(url_tableau: str, limite: int = 3):
   cookie_pinterest = os.environ.get("PINTEREST_COOKIE", "")
 
+  # Extraction du chemin du tableau (ex: /mtovenaar24/outfit/)
+  chemin = urlparse(url_tableau).path
+  if not chemin.endswith("/"):
+    chemin += "/"
+
   headers = {
       "User-Agent": (
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
           "AppleWebKit/537.36 (KHTML, like Gecko) "
           "Chrome/122.0.0.0 Safari/537.36"
       ),
-      "Accept": (
-          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-      ),
-      "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+      "Accept": "application/json, text/javascript, */*; q=0.01",
+      "X-Requested-With": "XMLHttpRequest",
+      "X-Pinterest-AppState": "active",
+      "X-Pinterest-Source-Url": chemin,
+      "Referer": f"https://pinterest.com{chemin}",
   }
 
   if cookie_pinterest:
     headers["Cookie"] = cookie_pinterest
+    # Extraction du csrftoken s'il est présent dans le cookie
+    match_csrf = re.search(r"csrftoken=([^;]+)", cookie_pinterest)
+    if match_csrf:
+      headers["X-CSRFToken"] = match_csrf.group(1)
+
+  # Appel direct à l'endpoint interne des tableaux Pinterest
+  api_url = "https://pinterest.com/resource/BoardFeedResource/get/"
+  options = {
+      "options": {
+          "board_url": chemin,
+          "page_size": limite * 2,
+          "add_vase": True,
+      },
+      "context": {},
+  }
 
   try:
-    reponse = requests.get(url_tableau, headers=headers, timeout=15)
+    reponse = requests.get(
+        api_url,
+        headers=headers,
+        params={"source_url": chemin, "data": json.dumps(options)},
+        timeout=15,
+    )
     reponse.raise_for_status()
   except Exception as e:
-    raise HTTPException(
-        status_code=500, detail=f"Erreur de connexion Pinterest : {e}"
-    )
+    raise HTTPException(status_code=500, detail=f"Erreur API Pinterest : {e}")
 
   urls_trouvees = []
 
-  # Cibler uniquement les formats d'épingles (.jpg ou .webp) et ignorer les icônes (/originals/ et .png)
+  # Recherche des URLs haute résolution dans la réponse JSON de l'API interne
   liens_bruts = re.findall(
-      r"https://i\.pinimg\.com/(?:236x|474x|736x)/[a-zA-Z0-9/_-]+\.(?:jpg|webp)",
+      r"https://i\.pinimg\.com/(?:736x|474x|236x)/[a-zA-Z0-9/_-]+\.(?:jpg|webp)",
       reponse.text,
   )
 
