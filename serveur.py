@@ -40,8 +40,9 @@ def recuperer_images(url_tableau: str, limite: int = 3):
 
   urls_trouvees = []
 
+  # Cibler uniquement les formats d'épingles (.jpg ou .webp) et ignorer les icônes (/originals/ et .png)
   liens_bruts = re.findall(
-      r"https://i\.pinimg\.com/(?:236x|474x|736x|originals)/[a-zA-Z0-9/_-]+\.(?:jpg|png|webp)",
+      r"https://i\.pinimg\.com/(?:236x|474x|736x)/[a-zA-Z0-9/_-]+\.(?:jpg|webp)",
       reponse.text,
   )
 
