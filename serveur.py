@@ -2,7 +2,7 @@ import json
 import os
 import re
 from urllib.parse import urlparse
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 import requests
 
 app = FastAPI()
@@ -17,10 +17,17 @@ def accueil():
 def recuperer_images(url_tableau: str, limite: int = 3):
   cookie_pinterest = os.environ.get("PINTEREST_COOKIE", "")
 
-  # Extraction du chemin du tableau (ex: /mtovenaar24/outfit/)
   chemin = urlparse(url_tableau).path
   if not chemin.endswith("/"):
     chemin += "/"
+
+  # Récupération ou génération d'un jeton CSRF requis par Pinterest
+  match_csrf = re.search(r"csrftoken=([^;]+)", cookie_pinterest)
+  csrf_token = match_csrf.group(1) if match_csrf else "1234567890abcdef"
+
+  cookie_complet = cookie_pinterest
+  if cookie_pinterest and "csrftoken=" not in cookie_pinterest:
+    cookie_complet = f"{cookie_pinterest}; csrftoken={csrf_token}"
 
   headers = {
       "User-Agent": (
@@ -32,17 +39,14 @@ def recuperer_images(url_tableau: str, limite: int = 3):
       "X-Requested-With": "XMLHttpRequest",
       "X-Pinterest-AppState": "active",
       "X-Pinterest-Source-Url": chemin,
+      "X-CSRFToken": csrf_token,
       "Referer": f"https://pinterest.com{chemin}",
   }
 
-  if cookie_pinterest:
-    headers["Cookie"] = cookie_pinterest
-    # Extraction du csrftoken s'il est présent dans le cookie
-    match_csrf = re.search(r"csrftoken=([^;]+)", cookie_pinterest)
-    if match_csrf:
-      headers["X-CSRFToken"] = match_csrf.group(1)
+  if cookie_complet:
+    headers["Cookie"] = cookie_complet
 
-  # Appel direct à l'endpoint interne des tableaux Pinterest
+  # Utilisation obligatoire de ://pinterest.com
   api_url = "https://pinterest.com/resource/BoardFeedResource/get/"
   options = {
       "options": {
@@ -60,13 +64,18 @@ def recuperer_images(url_tableau: str, limite: int = 3):
         params={"source_url": chemin, "data": json.dumps(options)},
         timeout=15,
     )
-    reponse.raise_for_status()
   except Exception as e:
-    raise HTTPException(status_code=500, detail=f"Erreur API Pinterest : {e}")
+    return {"erreur": f"Échec réseau : {str(e)}", "images": []}
+
+  # Si Pinterest bloque encore, on renvoie le code et le message exact sans planter (plus d'erreur 500)
+  if reponse.status_code != 200:
+    return {
+        "erreur": f"Pinterest a répondu avec le code {reponse.status_code}",
+        "detail": reponse.text[:300],
+        "images": [],
+    }
 
   urls_trouvees = []
-
-  # Recherche des URLs haute résolution dans la réponse JSON de l'API interne
   liens_bruts = re.findall(
       r"https://i\.pinimg\.com/(?:736x|474x|236x)/[a-zA-Z0-9/_-]+\.(?:jpg|webp)",
       reponse.text,
@@ -81,6 +90,5 @@ def recuperer_images(url_tableau: str, limite: int = 3):
 
   return {
       "nombre": len(urls_trouvees),
-      "cookie_present": bool(cookie_pinterest),
       "images": urls_trouvees,
   }
